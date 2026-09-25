@@ -16,7 +16,6 @@ local Custom = {} do
 	function Custom:Create(Name, Properties, Parent)
 		local inst = Instance.new(Name)
 		for k, v in pairs(Properties or {}) do
-			-- [FIX] bungkus pcall supaya 1 property invalid tidak crash seluruh UI
 			pcall(function() inst[k] = v end)
 		end
 		if Parent then inst.Parent = Parent end
@@ -302,7 +301,6 @@ function MugiHub_Library:CreateWindow(Config)
 		ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 	}, Player.PlayerGui)
 
-	-- [FIX] ScreenGui tidak punya AbsoluteSize → pakai Camera.ViewportSize
 	local vp = (workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize) or Vector2.new(1920, 1080)
 	local startX = vp.X // 2 - 200
 	local startY = vp.Y // 2 - 155
@@ -1160,7 +1158,6 @@ function MugiHub_Library:CreateWindow(Config)
 			local SectionTitleText = Title
 			local SearchSubtitle = _Name .. " . " .. SectionTitleText
 
-			-- [FIX] increment CountSection
 			local _SectionOrder = CountSection
 			CountSection = CountSection + 1
 
@@ -1349,7 +1346,7 @@ function MugiHub_Library:CreateWindow(Config)
 			function Item:AddButton(Config)
 				local Title    = Config[1] or Config.Title    or ""
 				local Content  = Config[2] or Config.Content  or ""
-				local Icon     = Custom:ResolveIcon(Config[3] or Config.Icon) 
+				local Icon     = Custom:ResolveIcon(Config[3] or Config.Icon)
 				if Icon == Custom.DefaultIcon and not (Config[3] or Config.Icon) then
 					Icon = ""
 				end
@@ -2219,5 +2216,232 @@ function MugiHub_Library:CreateWindow(Config)
 	Funcs.CreateTab = Tabs.CreateTab
 	return Funcs
 end
+
+-- ============================================================
+-- [TAMBAHAN] VVIND-UI COMPATIBILITY SHIM (FIXED)
+-- Membuat MugiHub bisa dipakai dengan API VVind-UI (Wisnu Hub)
+-- ============================================================
+
+local function WrapSectionForVind(section)
+	local wrap = {}
+
+	local function mkKeyPicker(subId, subCfg)
+		subCfg = subCfg or {}
+		local defaultKey = Enum.KeyCode.Unknown
+		if type(subCfg.Default) == "string" and subCfg.Default ~= "None" then
+			pcall(function() defaultKey = Enum.KeyCode[subCfg.Default] end)
+		elseif type(subCfg.Default) == "userdata" then
+			defaultKey = subCfg.Default
+		end
+		return section:AddKeybind({
+			Title   = subCfg.Text or subId,
+			Content = "",
+			Default = defaultKey,
+			Callback = function()
+				if subCfg.Callback then subCfg.Callback(true) end
+			end,
+		})
+	end
+
+	local function mkColorPicker(subId, subCfg)
+		subCfg = subCfg or {}
+		local init = subCfg.Default or Color3.fromRGB(255, 255, 255)
+		local R = math.floor(init.R * 255)
+		local G = math.floor(init.G * 255)
+		local B = math.floor(init.B * 255)
+		local function fire()
+			if subCfg.Callback then subCfg.Callback(Color3.fromRGB(R, G, B)) end
+		end
+		section:AddSlider({Title=(subCfg.Text or subId).." R", Min=0, Max=255, Default=R, Increment=1, Callback=function(v) R=v; fire() end})
+		section:AddSlider({Title=(subCfg.Text or subId).." G", Min=0, Max=255, Default=G, Increment=1, Callback=function(v) G=v; fire() end})
+		section:AddSlider({Title=(subCfg.Text or subId).." B", Min=0, Max=255, Default=B, Increment=1, Callback=function(v) B=v; fire() end})
+		return {
+			SetValueRGB = function(_, c)
+				R = math.floor(c.R * 255); G = math.floor(c.G * 255); B = math.floor(c.B * 255); fire()
+			end,
+		}
+	end
+
+	function wrap:AddCheckbox(id, cfg)
+		if type(id) == "table" then cfg = id; id = (cfg.Text or "check") end
+		cfg = cfg or {}
+		local toggle = section:AddToggle({
+			Title    = cfg.Text or id,
+			Content  = cfg.Tooltip or cfg.Description or "",
+			Default  = cfg.Default or false,
+			Callback = cfg.Callback or function() end,
+		})
+		toggle.AddKeyPicker   = function(_, subId, subCfg) return mkKeyPicker(subId, subCfg) end
+		toggle.AddColorPicker = function(_, subId, subCfg) return mkColorPicker(subId, subCfg) end
+		return toggle
+	end
+
+	function wrap:AddToggle(cfg)
+		if type(cfg) == "string" then cfg = {Text = cfg} end
+		cfg = cfg or {}
+		local toggle = section:AddToggle({
+			Title    = cfg.Text or "",
+			Content  = cfg.Tooltip or cfg.Description or "",
+			Default  = cfg.Default or false,
+			Callback = cfg.Callback or function() end,
+		})
+		toggle.AddKeyPicker   = function(_, subId, subCfg) return mkKeyPicker(subId, subCfg) end
+		toggle.AddColorPicker = function(_, subId, subCfg) return mkColorPicker(subId, subCfg) end
+		return toggle
+	end
+
+	function wrap:AddSlider(cfg)
+		cfg = cfg or {}
+		local inc = 1
+		if cfg.Increment and cfg.Increment > 0 then inc = cfg.Increment
+		elseif cfg.Rounding and cfg.Rounding > 0 then inc = cfg.Rounding end
+		return section:AddSlider({
+			Title     = cfg.Text or "",
+			Content   = cfg.Tooltip or "",
+			Increment = inc,
+			Min       = cfg.Min or 0,
+			Max       = cfg.Max or 100,
+			Default   = cfg.Default or cfg.Min or 0,
+			Callback  = cfg.Callback or function() end,
+		})
+	end
+
+	function wrap:AddButton(cfg, cb)
+		if type(cfg) == "string" then
+			cfg = {Text = cfg, Func = cb}
+		elseif type(cfg) ~= "table" then
+			cfg = {}
+		end
+		return section:AddButton({
+			Title    = cfg.Text or cfg.Title or "",
+			Content  = cfg.Tooltip or "",
+			Callback = cfg.Func or cfg.Callback or function() end,
+		})
+	end
+
+	function wrap:AddDropdown(cfg)
+		cfg = cfg or {}
+		local opts = cfg.Options or cfg.Values or {}
+		local def  = cfg.Default
+		local defaultVal = {}
+		if type(def) == "number" and opts[def] then
+			defaultVal = { opts[def] }
+		elseif type(def) == "string" then
+			defaultVal = { def }
+		elseif type(def) == "table" then
+			defaultVal = def
+		end
+		local dd = section:AddDropdown({
+			Title    = cfg.Text or "",
+			Content  = cfg.Tooltip or "",
+			Multi    = cfg.Multi or false,
+			Options  = opts,
+			Default  = defaultVal,
+			Callback = function(v)
+				if not cfg.Callback then return end
+				if cfg.Multi then cfg.Callback(v) else cfg.Callback(v[1] or "") end
+			end,
+		})
+		dd.AddKeyPicker = function(_, subId, subCfg) return mkKeyPicker(subId, subCfg) end
+		return dd
+	end
+
+	function wrap:AddInput(cfg)
+		if type(cfg) == "string" then cfg = {Text = cfg} end
+		cfg = cfg or {}
+		return section:AddInput({
+			Title    = cfg.Text or "",
+			Content  = cfg.Tooltip or "",
+			Default  = cfg.Default or "",
+			Callback = cfg.Callback or function() end,
+		})
+	end
+
+	function wrap:AddKeyPicker(id, cfg)
+		return mkKeyPicker(id, cfg)
+	end
+
+	function wrap:AddColorPicker(id, cfg)
+		return mkColorPicker(id, cfg)
+	end
+
+	function wrap:AddParagraph(cfg)
+		if type(cfg) == "string" then cfg = {Title = cfg, Content = ""} end
+		cfg = cfg or {}
+		return section:AddParagraph({
+			Title   = cfg.Title or cfg.Text or "",
+			Content = cfg.Content or "",
+		})
+	end
+
+	function wrap:AddDivider()
+		return section:AddLine()
+	end
+
+	function wrap:AddLabel(text)
+		local sf = section:AddParagraph({Title = text or "", Content = ""})
+		if type(sf) == "table" then
+			sf.AddKeyPicker = function(self, subId, subCfg) return mkKeyPicker(subId, subCfg) end
+			sf.AddColorPicker = function(self, subId, subCfg) return mkColorPicker(subId, subCfg) end
+			sf.AddButton = function(self, cfg, cb)
+				if type(cfg) == "string" then cfg = {Text = cfg, Func = cb} end
+				return section:AddButton({
+					Title    = cfg.Text or "",
+					Content  = cfg.Tooltip or "",
+					Callback = cfg.Func or cfg.Callback or function() end,
+				})
+			end
+		end
+		return sf
+	end
+
+	return wrap
+end
+
+-- Override CreateWindow: mapping config VVind → MugiHub + no-op method VVind
+local _origCreateWindow = MugiHub_Library.CreateWindow
+function MugiHub_Library:CreateWindow(cfg)
+	cfg = cfg or {}
+	local W = _origCreateWindow(self, {
+		Title       = cfg.Title or "Wisnu Hub",
+		Description = cfg.Subtitle or cfg.Footer or cfg.Description or "",
+		TabWidth    = 105,
+		SizeUi      = cfg.Size or UDim2.fromOffset(580, 440),
+		Keybind     = Enum.KeyCode.RightControl,
+		Icon        = "rbxthumb://type=Asset&id=130008176530837&w=420&h=420",
+	})
+
+	W.SetHeaderGlow     = function() end
+	W.SetProfileVisible = function() end
+	W.Toggle            = function() end
+
+	local _origCreateTab = W.CreateTab
+	W.CreateTab = function(self2, tcfg)
+		local sections = _origCreateTab(self2, tcfg)
+		local wrapped = {}
+
+		function wrapped:AddLeftGroupbox(name, icon)
+			return WrapSectionForVind(sections:AddSection(name or "", true))
+		end
+		function wrapped:AddRightGroupbox(name, icon)
+			return WrapSectionForVind(sections:AddSection(name or "", true))
+		end
+		function wrapped:AddRightTabbox()
+			local box = {}
+			function box:AddTab(name, icon)
+				return WrapSectionForVind(sections:AddSection(name or "", true))
+			end
+			return box
+		end
+
+		return wrapped
+	end
+
+	return W
+end
+
+-- ============================================================
+-- [AKHIR TAMBAHAN]
+-- ============================================================
 
 return MugiHub_Library
